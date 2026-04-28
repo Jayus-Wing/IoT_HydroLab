@@ -1,0 +1,6 @@
+smbus2
+RPi.GPIO
+picamera2
+paho-mqtt
+firebase-admin
+python-dotenv
