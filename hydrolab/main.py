@@ -3,6 +3,7 @@ import json
 import os
 import time
 import logging
+import threading
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -68,39 +69,79 @@ def init_camera():
     return cam
 
 
-# --- Firebase reads ---
-def read_settings():
-    ref = db.reference("settings")
-    data = ref.get()
+# --- Shared state (updated by Firebase listeners) ---
+_lock = threading.Lock()
+
+_settings = {"publish_interval": 30, "snapshot_interval": 300}
+_setpoints = {
+    "temperature": 24.0,
+    "humidity": 65.0,
+    "grow_light_on": "06:00",
+    "grow_light_off": "18:00",
+}
+_actuators = {
+    "peltier": {"state": "off", "manual_override": False},
+    "pump": {"state": False, "manual_override": False},
+    "mister": {"state": False, "manual_override": False},
+    "grow_light": {"state": False, "manual_override": False},
+}
+
+# Latest sensor readings (written by main loop, read by listeners)
+_latest_temp = None
+_latest_humidity = None
+
+
+def _on_settings_change(event):
+    global _settings
+    data = db.reference("settings").get()
     if data is None:
-        return {"publish_interval": 30, "snapshot_interval": 300}
-    return data
+        return
+    with _lock:
+        _settings = data
+    log.info("Settings updated via listener: %s", data)
 
 
-def read_setpoints():
-    ref = db.reference("setpoints")
-    data = ref.get()
+def _on_setpoints_change(event):
+    global _setpoints
+    data = db.reference("setpoints").get()
     if data is None:
-        return {
-            "temperature": 24.0,
-            "humidity": 65.0,
-            "grow_light_on": "06:00",
-            "grow_light_off": "18:00",
-        }
-    return data
+        return
+    with _lock:
+        _setpoints = data
+    log.info("Setpoints updated via listener: %s", data)
+    _react_to_change()
 
 
-def read_actuators():
-    ref = db.reference("actuators")
-    data = ref.get()
+def _on_actuators_change(event):
+    global _actuators
+    data = db.reference("actuators").get()
     if data is None:
-        return {
-            "peltier": {"state": "off", "manual_override": False},
-            "pump": {"state": False, "manual_override": False},
-            "mister": {"state": False, "manual_override": False},
-            "grow_light": {"state": False, "manual_override": False},
-        }
-    return data
+        return
+    with _lock:
+        _actuators = data
+    log.info("Actuators updated via listener: %s", data)
+    _react_to_change()
+
+
+def _react_to_change():
+    """Re-compute and drive GPIOs immediately when setpoints or actuators change."""
+    with _lock:
+        temp = _latest_temp
+        humidity = _latest_humidity
+        setpoints = dict(_setpoints)
+        current_actuators = dict(_actuators)
+    if temp is None or humidity is None:
+        return  # no sensor data yet, skip
+    actuator_states = compute_actuator_states(temp, humidity, setpoints, current_actuators)
+    drive_actuators(actuator_states)
+    log.info("GPIOs updated reactively")
+
+
+def start_listeners():
+    db.reference("settings").listen(_on_settings_change)
+    db.reference("setpoints").listen(_on_setpoints_change)
+    db.reference("actuators").listen(_on_actuators_change)
+    log.info("Firebase listeners started")
 
 
 # --- Firebase writes ---
@@ -234,10 +275,13 @@ def drive_actuators(actuator_states):
 
 # --- Main ---
 def main():
+    global _latest_temp, _latest_humidity
+
     init_firebase()
     mqtt_client = init_mqtt()
     init_gpio()
     camera = init_camera()
+    start_listeners()
 
     last_snapshot_time = 0
 
@@ -247,13 +291,12 @@ def main():
         while True:
             loop_start = time.time()
 
-            # Read config from Firebase
-            settings = read_settings()
-            setpoints = read_setpoints()
-            current_actuators = read_actuators()
-
-            publish_interval = settings.get("publish_interval", 30)
-            snapshot_interval = settings.get("snapshot_interval", 300)
+            # Read cached config (updated by listeners)
+            with _lock:
+                publish_interval = _settings.get("publish_interval", 30)
+                snapshot_interval = _settings.get("snapshot_interval", 300)
+                setpoints = dict(_setpoints)
+                current_actuators = dict(_actuators)
 
             # Read sensors
             try:
@@ -264,6 +307,11 @@ def main():
                 continue
 
             water_level = get_water_level()
+
+            # Update latest readings so listeners can use them
+            with _lock:
+                _latest_temp = temp
+                _latest_humidity = humidity
 
             log.info("T=%.1f°C  RH=%.1f%%  WL=%.0f%%", temp, humidity, water_level)
 
