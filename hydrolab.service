@@ -1,0 +1,16 @@
+[Unit]
+Description=HydroLab Pro Grow — RPi sensor/actuator daemon
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/IoT_HydroLab/hydrolab
+EnvironmentFile=/home/pi/IoT_HydroLab/.env
+ExecStart=/home/pi/IoT_HydroLab/venv/bin/python main.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
