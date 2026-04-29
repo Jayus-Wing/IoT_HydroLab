@@ -1,8 +1,13 @@
 import time
 from smbus2 import SMBus, i2c_msg
 
-SHT30_BUS = 1
 SHT30_ADDR = 0x44
+
+# Module 1 on I2C bus 1 (default), Module 2 on I2C bus 3
+MODULE_I2C_BUS = {
+    "module_1": 1,
+    "module_2": 3,
+}
 
 def _crc8(data):
     crc = 0xFF
@@ -12,11 +17,12 @@ def _crc8(data):
             crc = ((crc << 1) ^ 0x31) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
     return crc
 
-def read_sht30(retries=3):
+def read_sht30(module="module_1", retries=3):
     """Read temperature (C) and humidity (%RH) from SHT30. Returns (temp, humidity)."""
+    bus_num = MODULE_I2C_BUS[module]
     for attempt in range(retries):
         try:
-            with SMBus(SHT30_BUS) as bus:
+            with SMBus(bus_num) as bus:
                 bus.write_i2c_block_data(SHT30_ADDR, 0x2C, [0x06])
                 time.sleep(0.05)
                 msg = i2c_msg.read(SHT30_ADDR, 6)

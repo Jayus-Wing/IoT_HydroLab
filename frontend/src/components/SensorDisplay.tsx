@@ -40,21 +40,21 @@ const TIME_RANGES: Record<string, string> = {
   "24h": "-24h",
 };
 
-export default function SensorDisplay() {
+export default function SensorDisplay({ module }: { module: string }) {
   const [sensors, setSensors] = useState<SensorData | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [timeRange, setTimeRange] = useState("1h");
 
   // Live sensor data from Firebase
   useEffect(() => {
-    const sensorsRef = ref(db, "sensors");
+    const sensorsRef = ref(db, `modules/${module}/sensors`);
     const unsub = onValue(sensorsRef, (snapshot) => {
       if (snapshot.exists()) {
         setSensors(snapshot.val());
       }
     });
     return () => unsub();
-  }, []);
+  }, [module]);
 
   // Historical data from InfluxDB
   useEffect(() => {
@@ -62,6 +62,7 @@ export default function SensorDisplay() {
       from(bucket: "${INFLUX_BUCKET}")
         |> range(start: ${TIME_RANGES[timeRange]})
         |> filter(fn: (r) => r._measurement == "environment")
+        |> filter(fn: (r) => r.module == "${module}")
         |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
         |> yield(name: "mean")
     `;
@@ -89,7 +90,7 @@ export default function SensorDisplay() {
         setHistory(sorted);
       },
     });
-  }, [timeRange]);
+  }, [timeRange, module]);
 
   const formatTime = (time: string) => {
     const d = new Date(time);

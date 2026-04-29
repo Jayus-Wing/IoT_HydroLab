@@ -31,6 +31,8 @@ HUMIDITY_DEADBAND = 5.0   # %RH
 SNAPSHOT_WIDTH = 640
 SNAPSHOT_HEIGHT = 480
 
+MODULES = ["module_1", "module_2"]
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-7s  %(message)s",
@@ -74,22 +76,25 @@ def init_camera():
 _lock = threading.Lock()
 
 _settings = {"publish_interval": 30, "snapshot_interval": 300}
-_setpoints = {
-    "temperature": 24.0,
-    "humidity": 65.0,
-    "grow_light_on": "06:00",
-    "grow_light_off": "18:00",
-}
-_actuators = {
-    "peltier": {"state": "off", "manual_override": False},
-    "pump": {"state": False, "manual_override": False},
-    "mister": {"state": False, "manual_override": False},
-    "grow_light": {"state": False, "manual_override": False},
-}
 
-# Latest sensor readings (written by main loop, read by listeners)
-_latest_temp = None
-_latest_humidity = None
+_module_state = {}
+for _m in MODULES:
+    _module_state[_m] = {
+        "setpoints": {
+            "temperature": 24.0,
+            "humidity": 65.0,
+            "grow_light_on": "06:00",
+            "grow_light_off": "18:00",
+        },
+        "actuators": {
+            "peltier": {"state": "off", "manual_override": False},
+            "pump": {"state": False, "manual_override": False},
+            "mister": {"state": False, "manual_override": False},
+            "grow_light": {"state": False, "manual_override": False},
+        },
+        "latest_temp": None,
+        "latest_humidity": None,
+    }
 
 
 def _on_settings_change(event):
@@ -99,63 +104,65 @@ def _on_settings_change(event):
         return
     with _lock:
         _settings = data
-    log.info("Settings updated via listener: %s", data)
+    log.info("Settings updated via listener")
 
 
-def _on_setpoints_change(event):
-    global _setpoints
-    data = db.reference("setpoints").get()
-    if data is None:
-        return
+def _make_module_setpoints_listener(module):
+    def _on_change(event):
+        data = db.reference(f"modules/{module}/setpoints").get()
+        if data is None:
+            return
+        with _lock:
+            _module_state[module]["setpoints"] = data
+        log.info("%s setpoints updated via listener", module)
+        _react_to_change(module)
+    return _on_change
+
+
+def _make_module_actuators_listener(module):
+    def _on_change(event):
+        data = db.reference(f"modules/{module}/actuators").get()
+        if data is None:
+            return
+        with _lock:
+            _module_state[module]["actuators"] = data
+        log.info("%s actuators updated via listener", module)
+        _react_to_change(module)
+    return _on_change
+
+
+def _react_to_change(module):
     with _lock:
-        _setpoints = data
-    log.info("Setpoints updated via listener: %s", data)
-    _react_to_change()
-
-
-def _on_actuators_change(event):
-    global _actuators
-    data = db.reference("actuators").get()
-    if data is None:
-        return
-    with _lock:
-        _actuators = data
-    log.info("Actuators updated via listener: %s", data)
-    _react_to_change()
-
-
-def _react_to_change():
-    """Re-compute and drive GPIOs immediately when setpoints or actuators change."""
-    with _lock:
-        temp = _latest_temp
-        humidity = _latest_humidity
-        setpoints = dict(_setpoints)
-        current_actuators = dict(_actuators)
+        temp = _module_state[module]["latest_temp"]
+        humidity = _module_state[module]["latest_humidity"]
+        setpoints = dict(_module_state[module]["setpoints"])
+        current_actuators = dict(_module_state[module]["actuators"])
     if temp is None or humidity is None:
-        return  # no sensor data yet, skip
+        return
     actuator_states = compute_actuator_states(temp, humidity, setpoints, current_actuators)
-    drive_actuators(actuator_states)
-    log.info("GPIOs updated reactively")
+    drive_actuators(module, actuator_states)
+    log.info("%s GPIOs updated reactively", module)
 
 
 def start_listeners():
     db.reference("settings").listen(_on_settings_change)
-    db.reference("setpoints").listen(_on_setpoints_change)
-    db.reference("actuators").listen(_on_actuators_change)
+    for module in MODULES:
+        db.reference(f"modules/{module}/setpoints").listen(_make_module_setpoints_listener(module))
+        db.reference(f"modules/{module}/actuators").listen(_make_module_actuators_listener(module))
     log.info("Firebase listeners started")
 
 
 # --- Firebase writes ---
-def write_sensors(temp, humidity, water_level):
+def write_sensors(module, temp, humidity, water_level):
     now = int(time.time())
-    db.reference("sensors").update({
+    db.reference(f"modules/{module}/sensors").update({
         "temperature": {"value": round(temp, 2), "updated_at": now},
         "humidity": {"value": round(humidity, 2), "updated_at": now},
         "water_level": {"value": water_level, "updated_at": now},
     })
 
 
-def write_actuator_state(actuator_states):
+def write_actuator_state(module, actuator_states):
     now = int(time.time())
     updates = {}
     for name, state_info in actuator_states.items():
@@ -164,27 +171,27 @@ def write_actuator_state(actuator_states):
             "manual_override": state_info["manual_override"],
             "updated_at": now,
         }
-    db.reference("actuators").update(updates)
+    db.reference(f"modules/{module}/actuators").update(updates)
 
 
 # --- MQTT publish ---
-def publish_environment(mqtt_client, temp, humidity, water_level):
+def publish_environment(mqtt_client, module, temp, humidity, water_level):
     payload = json.dumps({
         "temperature": round(temp, 2),
         "humidity": round(humidity, 2),
         "water_level": water_level,
     })
-    mqtt_client.publish("hydrolab/environment", payload)
+    mqtt_client.publish(f"hydrolab/{module}/environment", payload)
 
 
-def publish_actuators(mqtt_client, actuator_states):
+def publish_actuators(mqtt_client, module, actuator_states):
     payload = json.dumps({
         "peltier": actuator_states["peltier"]["state"],
         "pump": actuator_states["pump"]["state"],
         "mister": actuator_states["mister"]["state"],
         "grow_light": actuator_states["grow_light"]["state"],
     })
-    mqtt_client.publish("hydrolab/actuators", payload)
+    mqtt_client.publish(f"hydrolab/{module}/actuators", payload)
 
 
 # --- Snapshot ---
@@ -241,7 +248,6 @@ def compute_actuator_states(temp, humidity, setpoints, current_actuators):
         elif humidity > target_humidity:
             mister_state = False
         else:
-            # In the deadband — keep current state
             mister_state = mister_info.get("state", False)
         states["mister"] = {"state": mister_state, "manual_override": False}
 
@@ -259,7 +265,6 @@ def compute_actuator_states(temp, humidity, setpoints, current_actuators):
         if on_time <= off_time:
             light_on = on_time <= now_time < off_time
         else:
-            # Overnight schedule (e.g., 22:00 - 06:00)
             light_on = now_time >= on_time or now_time < off_time
         states["grow_light"] = {"state": light_on, "manual_override": False}
 
@@ -273,17 +278,15 @@ def compute_actuator_states(temp, humidity, setpoints, current_actuators):
     return states
 
 
-def drive_actuators(actuator_states):
-    set_peltier(actuator_states["peltier"]["state"])
-    set_pump(actuator_states["pump"]["state"])
-    set_mister(actuator_states["mister"]["state"])
-    set_grow_light(actuator_states["grow_light"]["state"])
+def drive_actuators(module, actuator_states):
+    set_peltier(module, actuator_states["peltier"]["state"])
+    set_pump(module, actuator_states["pump"]["state"])
+    set_mister(module, actuator_states["mister"]["state"])
+    set_grow_light(module, actuator_states["grow_light"]["state"])
 
 
 # --- Main ---
 def main():
-    global _latest_temp, _latest_humidity
-
     init_firebase()
     mqtt_client = init_mqtt()
     init_gpio()
@@ -298,52 +301,52 @@ def main():
         while True:
             loop_start = time.time()
 
-            # Read cached config (updated by listeners)
             with _lock:
                 publish_interval = _settings.get("publish_interval", 30)
                 snapshot_interval = _settings.get("snapshot_interval", 300)
-                setpoints = dict(_setpoints)
-                current_actuators = dict(_actuators)
 
-            # Read sensors
-            try:
-                temp, humidity = read_sht30()
-            except Exception as e:
-                log.error("SHT30 read failed: %s", e)
-                time.sleep(publish_interval)
-                continue
+            for module in MODULES:
+                with _lock:
+                    setpoints = dict(_module_state[module]["setpoints"])
+                    current_actuators = dict(_module_state[module]["actuators"])
 
-            water_level = get_water_level()
+                # Read sensors
+                try:
+                    temp, humidity = read_sht30(module)
+                except Exception as e:
+                    log.error("%s SHT30 read failed: %s", module, e)
+                    continue
 
-            # Update latest readings so listeners can use them
-            with _lock:
-                _latest_temp = temp
-                _latest_humidity = humidity
+                water_level = get_water_level()
 
-            log.info("T=%.1f°C  RH=%.1f%%  WL=%.0f%%", temp, humidity, water_level)
+                with _lock:
+                    _module_state[module]["latest_temp"] = temp
+                    _module_state[module]["latest_humidity"] = humidity
 
-            # Write sensor values to Firebase
-            try:
-                write_sensors(temp, humidity, water_level)
-            except Exception as e:
-                log.error("Firebase sensor write failed: %s", e)
+                log.info("%s  T=%.1f°C  RH=%.1f%%  WL=%.0f%%", module, temp, humidity, water_level)
 
-            # Publish to MQTT
-            try:
-                publish_environment(mqtt_client, temp, humidity, water_level)
-            except Exception as e:
-                log.error("MQTT environment publish failed: %s", e)
+                # Write sensor values to Firebase
+                try:
+                    write_sensors(module, temp, humidity, water_level)
+                except Exception as e:
+                    log.error("%s Firebase sensor write failed: %s", module, e)
 
-            # Compute and drive actuators
-            actuator_states = compute_actuator_states(temp, humidity, setpoints, current_actuators)
-            drive_actuators(actuator_states)
+                # Publish to MQTT
+                try:
+                    publish_environment(mqtt_client, module, temp, humidity, water_level)
+                except Exception as e:
+                    log.error("%s MQTT environment publish failed: %s", module, e)
 
-            # Write actuator state to Firebase + MQTT
-            try:
-                write_actuator_state(actuator_states)
-                publish_actuators(mqtt_client, actuator_states)
-            except Exception as e:
-                log.error("Actuator state publish failed: %s", e)
+                # Compute and drive actuators
+                actuator_states = compute_actuator_states(temp, humidity, setpoints, current_actuators)
+                drive_actuators(module, actuator_states)
+
+                # Write actuator state to Firebase + MQTT
+                try:
+                    write_actuator_state(module, actuator_states)
+                    publish_actuators(mqtt_client, module, actuator_states)
+                except Exception as e:
+                    log.error("%s actuator state publish failed: %s", module, e)
 
             # Snapshot check
             if time.time() - last_snapshot_time >= snapshot_interval:

@@ -26,21 +26,21 @@ interface Actuators {
   grow_light: ActuatorState;
 }
 
-export default function ActuatorControls() {
+export default function ActuatorControls({ module }: { module: string }) {
   const [actuators, setActuators] = useState<Actuators | null>(null);
 
   useEffect(() => {
-    const actuatorsRef = ref(db, "actuators");
+    const actuatorsRef = ref(db, `modules/${module}/actuators`);
     const unsub = onValue(actuatorsRef, (snapshot) => {
       if (snapshot.exists()) {
         setActuators(snapshot.val());
       }
     });
     return () => unsub();
-  }, []);
+  }, [module]);
 
   const toggleActuator = (name: string, currentState: boolean) => {
-    update(ref(db, `actuators/${name}`), {
+    update(ref(db, `modules/${module}/actuators/${name}`), {
       state: !currentState,
       manual_override: true,
       updated_at: Date.now(),
@@ -48,7 +48,7 @@ export default function ActuatorControls() {
   };
 
   const setPeltierState = (value: string) => {
-    update(ref(db, "actuators/peltier"), {
+    update(ref(db, `modules/${module}/actuators/peltier`), {
       state: value,
       manual_override: true,
       updated_at: Date.now(),
@@ -56,7 +56,7 @@ export default function ActuatorControls() {
   };
 
   const setManualOverride = (name: string, override: boolean) => {
-    update(ref(db, `actuators/${name}`), {
+    update(ref(db, `modules/${module}/actuators/${name}`), {
       manual_override: override,
     });
   };
@@ -102,11 +102,11 @@ export default function ActuatorControls() {
               </SelectContent>
             </Select>
             <div className="flex items-center justify-between">
-              <Label htmlFor="peltier-override" className="text-xs text-muted-foreground">
+              <Label htmlFor={`${module}-peltier-override`} className="text-xs text-muted-foreground">
                 Manual Override
               </Label>
               <Switch
-                id="peltier-override"
+                id={`${module}-peltier-override`}
                 size="sm"
                 checked={actuators.peltier.manual_override}
                 onCheckedChange={(v) => setManualOverride("peltier", v)}
@@ -165,11 +165,11 @@ export default function ActuatorControls() {
               />
             </div>
             <div className="flex items-center justify-between">
-              <Label htmlFor="mister-override" className="text-xs text-muted-foreground">
+              <Label htmlFor={`${module}-mister-override`} className="text-xs text-muted-foreground">
                 Manual Override
               </Label>
               <Switch
-                id="mister-override"
+                id={`${module}-mister-override`}
                 size="sm"
                 checked={actuators.mister.manual_override}
                 onCheckedChange={(v) => setManualOverride("mister", v)}
@@ -204,11 +204,11 @@ export default function ActuatorControls() {
               />
             </div>
             <div className="flex items-center justify-between">
-              <Label htmlFor="light-override" className="text-xs text-muted-foreground">
+              <Label htmlFor={`${module}-light-override`} className="text-xs text-muted-foreground">
                 Manual Override
               </Label>
               <Switch
-                id="light-override"
+                id={`${module}-light-override`}
                 size="sm"
                 checked={actuators.grow_light.manual_override}
                 onCheckedChange={(v) => setManualOverride("grow_light", v)}

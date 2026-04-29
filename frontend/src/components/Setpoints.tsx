@@ -18,32 +18,32 @@ interface SensorLive {
   humidity: { value: number };
 }
 
-export default function Setpoints() {
+export default function Setpoints({ module }: { module: string }) {
   const [setpoints, setSetpoints] = useState<SetpointData | null>(null);
   const [sensors, setSensors] = useState<SensorLive | null>(null);
 
   useEffect(() => {
-    const setpointsRef = ref(db, "setpoints");
+    const setpointsRef = ref(db, `modules/${module}/setpoints`);
     const unsub = onValue(setpointsRef, (snapshot) => {
       if (snapshot.exists()) {
         setSetpoints(snapshot.val());
       }
     });
     return () => unsub();
-  }, []);
+  }, [module]);
 
   useEffect(() => {
-    const sensorsRef = ref(db, "sensors");
+    const sensorsRef = ref(db, `modules/${module}/sensors`);
     const unsub = onValue(sensorsRef, (snapshot) => {
       if (snapshot.exists()) {
         setSensors(snapshot.val());
       }
     });
     return () => unsub();
-  }, []);
+  }, [module]);
 
   const updateSetpoint = (key: string, value: number | string) => {
-    update(ref(db, "setpoints"), { [key]: value });
+    update(ref(db, `modules/${module}/setpoints`), { [key]: value });
   };
 
   if (!setpoints) {
@@ -119,18 +119,18 @@ export default function Setpoints() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="light-on">Turn On</Label>
+                <Label htmlFor={`${module}-light-on`}>Turn On</Label>
                 <Input
-                  id="light-on"
+                  id={`${module}-light-on`}
                   type="time"
                   value={setpoints.grow_light_on}
                   onChange={(e) => updateSetpoint("grow_light_on", e.target.value)}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="light-off">Turn Off</Label>
+                <Label htmlFor={`${module}-light-off`}>Turn Off</Label>
                 <Input
-                  id="light-off"
+                  id={`${module}-light-off`}
                   type="time"
                   value={setpoints.grow_light_off}
                   onChange={(e) => updateSetpoint("grow_light_off", e.target.value)}
