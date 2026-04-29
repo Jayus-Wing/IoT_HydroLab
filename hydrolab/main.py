@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, db, storage
 import paho.mqtt.client as mqtt
-from picamera2 import Picamera2
+import cv2
 
 from sensors import read_sht30, get_water_level
 from actuators import init_gpio, set_peltier, set_pump, set_mister, set_grow_light, cleanup
@@ -60,12 +60,13 @@ def init_mqtt():
 
 # --- Camera init ---
 def init_camera():
-    cam = Picamera2()
-    config = cam.create_still_configuration(main={"size": (SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT)})
-    cam.configure(config)
-    cam.start()
-    time.sleep(1)  # let camera warm up
-    log.info("Camera initialized")
+    cam = cv2.VideoCapture(0)
+    cam.set(cv2.CAP_PROP_FRAME_WIDTH, SNAPSHOT_WIDTH)
+    cam.set(cv2.CAP_PROP_FRAME_HEIGHT, SNAPSHOT_HEIGHT)
+    if not cam.isOpened():
+        log.error("Failed to open USB camera")
+        return None
+    log.info("USB camera initialized")
     return cam
 
 
@@ -188,9 +189,15 @@ def publish_actuators(mqtt_client, actuator_states):
 
 # --- Snapshot ---
 def capture_and_upload(camera):
+    if camera is None:
+        return
+    ret, frame = camera.read()
+    if not ret:
+        log.error("Failed to capture frame from USB camera")
+        return
     timestamp = int(time.time())
     local_path = f"/tmp/snapshot_{timestamp}.jpg"
-    camera.capture_file(local_path)
+    cv2.imwrite(local_path, frame)
 
     remote_path = f"snapshots/{timestamp}.jpg"
     bucket = storage.bucket()
@@ -357,7 +364,8 @@ def main():
         cleanup()
         mqtt_client.loop_stop()
         mqtt_client.disconnect()
-        camera.stop()
+        if camera is not None:
+            camera.release()
 
 
 if __name__ == "__main__":
