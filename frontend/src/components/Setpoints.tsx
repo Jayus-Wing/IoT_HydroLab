@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ref, onValue, update } from "firebase/database";
+import { ref, onValue, update, set, get } from "firebase/database";
 import { db } from "@/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -18,12 +18,24 @@ interface SensorLive {
   humidity: { value: number };
 }
 
+const DEFAULT_SETPOINTS: SetpointData = {
+  temperature: 24.0,
+  humidity: 65.0,
+  grow_light_on: "06:00",
+  grow_light_off: "18:00",
+};
+
 export default function Setpoints({ module }: { module: string }) {
   const [setpoints, setSetpoints] = useState<SetpointData | null>(null);
   const [sensors, setSensors] = useState<SensorLive | null>(null);
 
   useEffect(() => {
     const setpointsRef = ref(db, `modules/${module}/setpoints`);
+    get(setpointsRef).then((snapshot) => {
+      if (!snapshot.exists()) {
+        set(setpointsRef, DEFAULT_SETPOINTS);
+      }
+    });
     const unsub = onValue(setpointsRef, (snapshot) => {
       if (snapshot.exists()) {
         setSetpoints(snapshot.val());

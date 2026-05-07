@@ -6,7 +6,7 @@ SHT30_ADDR = 0x44
 # Module 1 on I2C bus 1 (default), Module 2 on I2C bus 3
 MODULE_I2C_BUS = {
     "module_1": 1,
-    "module_2": 3,
+    "module_2": 0,
 }
 
 def _crc8(data):

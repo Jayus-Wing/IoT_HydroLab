@@ -92,7 +92,7 @@ function Dashboard() {
             </p>
           </div>
           <Button variant="outline" asChild>
-            <a href="http://localhost:3000" target="_blank" rel="noopener noreferrer">
+            <a href="https://grafana.hydrolab-pro.com" target="_blank" rel="noopener noreferrer">
               Grafana Dashboard
             </a>
           </Button>

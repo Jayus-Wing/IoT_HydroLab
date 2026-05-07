@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ref, onValue, update } from "firebase/database";
+import { ref, onValue, update, set, get } from "firebase/database";
 import { db } from "@/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -10,11 +10,21 @@ interface SettingsData {
   snapshot_interval: number;
 }
 
+const DEFAULT_SETTINGS: SettingsData = {
+  publish_interval: 30,
+  snapshot_interval: 300,
+};
+
 export default function Settings() {
   const [settings, setSettings] = useState<SettingsData | null>(null);
 
   useEffect(() => {
     const settingsRef = ref(db, "settings");
+    get(settingsRef).then((snapshot) => {
+      if (!snapshot.exists()) {
+        set(settingsRef, DEFAULT_SETTINGS);
+      }
+    });
     const unsub = onValue(settingsRef, (snapshot) => {
       if (snapshot.exists()) {
         setSettings(snapshot.val());

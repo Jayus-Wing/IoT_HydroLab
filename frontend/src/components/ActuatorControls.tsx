@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ref, onValue, update } from "firebase/database";
+import { ref, onValue, update, set, get } from "firebase/database";
 import { db } from "@/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -26,11 +26,23 @@ interface Actuators {
   grow_light: ActuatorState;
 }
 
+const DEFAULT_ACTUATORS: Actuators = {
+  peltier: { state: "off", manual_override: false, updated_at: 0 },
+  pump: { state: false, manual_override: false, updated_at: 0 },
+  mister: { state: false, manual_override: false, updated_at: 0 },
+  grow_light: { state: false, manual_override: false, updated_at: 0 },
+};
+
 export default function ActuatorControls({ module }: { module: string }) {
   const [actuators, setActuators] = useState<Actuators | null>(null);
 
   useEffect(() => {
     const actuatorsRef = ref(db, `modules/${module}/actuators`);
+    get(actuatorsRef).then((snapshot) => {
+      if (!snapshot.exists()) {
+        set(actuatorsRef, DEFAULT_ACTUATORS);
+      }
+    });
     const unsub = onValue(actuatorsRef, (snapshot) => {
       if (snapshot.exists()) {
         setActuators(snapshot.val());
@@ -43,7 +55,7 @@ export default function ActuatorControls({ module }: { module: string }) {
     update(ref(db, `modules/${module}/actuators/${name}`), {
       state: !currentState,
       manual_override: true,
-      updated_at: Date.now(),
+      updated_at: Math.floor(Date.now() / 1000),
     });
   };
 
@@ -51,7 +63,7 @@ export default function ActuatorControls({ module }: { module: string }) {
     update(ref(db, `modules/${module}/actuators/peltier`), {
       state: value,
       manual_override: true,
-      updated_at: Date.now(),
+      updated_at: Math.floor(Date.now() / 1000),
     });
   };
 
@@ -63,7 +75,7 @@ export default function ActuatorControls({ module }: { module: string }) {
 
   const formatTimestamp = (ts: number) => {
     if (!ts) return "never";
-    return new Date(ts).toLocaleTimeString();
+    return new Date(ts * 1000).toLocaleTimeString();
   };
 
   if (!actuators) {

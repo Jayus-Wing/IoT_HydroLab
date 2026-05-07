@@ -56,40 +56,45 @@ export default function SensorDisplay({ module }: { module: string }) {
     return () => unsub();
   }, [module]);
 
-  // Historical data from InfluxDB
+  // Historical data from InfluxDB (polls every 30s)
   useEffect(() => {
-    const fluxQuery = `
-      from(bucket: "${INFLUX_BUCKET}")
-        |> range(start: ${TIME_RANGES[timeRange]})
-        |> filter(fn: (r) => r._measurement == "environment")
-        |> filter(fn: (r) => r.module == "${module}")
-        |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
-        |> yield(name: "mean")
-    `;
+    const fetchHistory = () => {
+      const fluxQuery = `
+        from(bucket: "${INFLUX_BUCKET}")
+          |> range(start: ${TIME_RANGES[timeRange]})
+          |> filter(fn: (r) => r._measurement == "environment")
+          |> filter(fn: (r) => r.module == "${module}")
+          |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
+          |> yield(name: "mean")
+      `;
 
-    const points: HistoryPoint[] = [];
-    const seen = new Map<string, HistoryPoint>();
+      const seen = new Map<string, HistoryPoint>();
 
-    queryApi.queryRows(fluxQuery, {
-      next(row, tableMeta) {
-        const o = tableMeta.toObject(row);
-        const timeKey = o._time as string;
-        if (!seen.has(timeKey)) {
-          seen.set(timeKey, { time: timeKey });
-        }
-        const point = seen.get(timeKey)!;
-        point[o._field as keyof HistoryPoint] = o._value as number;
-      },
-      error(error) {
-        console.error("InfluxDB query error:", error);
-      },
-      complete() {
-        const sorted = Array.from(seen.values()).sort(
-          (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
-        );
-        setHistory(sorted);
-      },
-    });
+      queryApi.queryRows(fluxQuery, {
+        next(row, tableMeta) {
+          const o = tableMeta.toObject(row);
+          const timeKey = o._time as string;
+          if (!seen.has(timeKey)) {
+            seen.set(timeKey, { time: timeKey });
+          }
+          const point = seen.get(timeKey)!;
+          point[o._field as keyof HistoryPoint] = o._value as number;
+        },
+        error(error) {
+          console.error("InfluxDB query error:", error);
+        },
+        complete() {
+          const sorted = Array.from(seen.values()).sort(
+            (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
+          );
+          setHistory(sorted);
+        },
+      });
+    };
+
+    fetchHistory();
+    const interval = setInterval(fetchHistory, 30000);
+    return () => clearInterval(interval);
   }, [timeRange, module]);
 
   const formatTime = (time: string) => {
@@ -172,14 +177,14 @@ export default function SensorDisplay({ module }: { module: string }) {
                 />
                 <YAxis
                   yAxisId="temp"
-                  stroke="hsl(var(--chart-1))"
+                  stroke="#ef4444"
                   fontSize={12}
                   label={{ value: "°C", position: "insideLeft", offset: 10 }}
                 />
                 <YAxis
                   yAxisId="percent"
                   orientation="right"
-                  stroke="hsl(var(--chart-2))"
+                  stroke="#3b82f6"
                   fontSize={12}
                   label={{ value: "%", position: "insideRight", offset: 10 }}
                 />
@@ -197,7 +202,7 @@ export default function SensorDisplay({ module }: { module: string }) {
                   yAxisId="temp"
                   type="monotone"
                   dataKey="temperature"
-                  stroke="hsl(var(--chart-1))"
+                  stroke="#ef4444"
                   strokeWidth={2}
                   dot={false}
                   name="Temperature (°C)"
@@ -206,7 +211,7 @@ export default function SensorDisplay({ module }: { module: string }) {
                   yAxisId="percent"
                   type="monotone"
                   dataKey="humidity"
-                  stroke="hsl(var(--chart-2))"
+                  stroke="#3b82f6"
                   strokeWidth={2}
                   dot={false}
                   name="Humidity (%RH)"
